@@ -1,0 +1,39 @@
+FROM php:8.2-cli
+
+# Set working directory
+WORKDIR /var/www
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    zip \
+    unzip \
+    libpq-dev \
+    libzip-dev
+
+# Install PHP extensions
+RUN docker-php-ext-install pdo_pgsql zip
+
+# Copy composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+# Copy project files
+COPY . .
+
+# Install Laravel dependencies
+RUN composer install --no-dev --optimize-autoloader
+
+# Generate storage permissions
+RUN chmod -R 775 storage bootstrap/cache
+
+# Expose port
+EXPOSE 8000
+
+# Start Laravel server + clear caches + migrate
+CMD php artisan config:clear && \
+    php artisan cache:clear && \
+    php artisan route:clear && \
+    php artisan view:clear && \
+    php artisan migrate --force && \
+    php artisan serve --host=0.0.0.0 --port=8000
