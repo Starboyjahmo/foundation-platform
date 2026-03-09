@@ -11,16 +11,16 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     libzip-dev
 
-# Install PHP extensions for PostgreSQL
+# Install PostgreSQL PHP drivers
 RUN docker-php-ext-install pgsql pdo_pgsql zip
 
-# Copy composer
+# Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Copy project
+# Copy application files
 COPY . .
 
-# Install dependencies
+# Install Laravel dependencies
 RUN composer install --no-dev --optimize-autoloader
 
 # Fix permissions
