@@ -2,27 +2,31 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Donation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class MpesaController extends Controller
 {
-    // Handle STK Push request
     public function stkPush(Request $request)
     {
         $request->validate([
-            'phone' => 'required',
+            'phone'  => 'required',
             'amount' => 'required|numeric|min:1',
+            'name'   => 'required',
+            'email'  => 'required|email',
         ]);
 
         try {
-            // Get Consumer Key & Secret from .env
-            $consumerKey = env('MPESA_CONSUMER_KEY');
-            $consumerSecret = env('MPESA_CONSUMER_SECRET');
+            $consumerKey    = config('services.mpesa.consumer_key');
+            $consumerSecret = config('services.mpesa.consumer_secret');
+            $shortcode      = config('services.mpesa.shortcode');
+            $passkey        = config('services.mpesa.passkey');
+            $callbackUrl    = config('services.mpesa.callback_url');
 
-            if(!$consumerKey || !$consumerSecret) {
-                throw new \Exception('Mpesa credentials not set in environment variables.');
+            if (!$consumerKey || !$consumerSecret) {
+                throw new \Exception('M-Pesa credentials not configured.');
             }
 
             // Generate access token
@@ -32,53 +36,69 @@ class MpesaController extends Controller
             $accessToken = $tokenResponse->json()['access_token'] ?? null;
 
             if (!$accessToken) {
-                throw new \Exception('Could not generate access token. Check your credentials.');
+                Log::error('Mpesa Token Error', $tokenResponse->json());
+                throw new \Exception('Could not generate access token.');
             }
 
             // Generate timestamp and password
             $timestamp = date('YmdHis');
-            $password = base64_encode(env('MPESA_SHORTCODE') . env('MPESA_PASSKEY') . $timestamp);
+            $password  = base64_encode($shortcode . $passkey . $timestamp);
 
-            // Format phone number to 2547XXXXXXXX
-            $phone = preg_replace('/^0/', '254', $request->phone);
+            // Format phone: 07XX → 2547XX
+            $phone = preg_replace('/^\+/', '', $request->phone);
+            $phone = preg_replace('/^0/', '254', $phone);
 
-            // Make STK Push request
+            // STK Push request
             $response = Http::withToken($accessToken)->post(
                 'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
                 [
-                    "BusinessShortCode" => env('MPESA_SHORTCODE'),
-                    "Password" => $password,
-                    "Timestamp" => $timestamp,
-                    "TransactionType" => "CustomerPayBillOnline",
-                    "Amount" => $request->amount,
-                    "PartyA" => $phone,
-                    "PartyB" => env('MPESA_SHORTCODE'),
-                    "PhoneNumber" => $phone,
-                    "CallBackURL" => env('MPESA_CALLBACK_URL'),
-                    "AccountReference" => "FoundationDonation",
-                    "TransactionDesc" => "Donation Payment"
+                    "BusinessShortCode" => $shortcode,
+                    "Password"          => $password,
+                    "Timestamp"         => $timestamp,
+                    "TransactionType"   => "CustomerPayBillOnline",
+                    "Amount"            => (int) $request->amount,
+                    "PartyA"            => $phone,
+                    "PartyB"            => $shortcode,
+                    "PhoneNumber"       => $phone,
+                    "CallBackURL"       => $callbackUrl,
+                    "AccountReference"  => "FoundationDonation",
+                    "TransactionDesc"   => "Donation Payment"
                 ]
             );
 
-            return response()->json($response->json());
+            $result = $response->json();
+            Log::info('Mpesa STK Response', $result);
+
+            if (isset($result['ResponseCode']) && $result['ResponseCode'] == '0') {
+                Donation::create([
+                    'name'           => $request->name,
+                    'email'          => $request->email,
+                    'amount'         => $request->amount,
+                    'payment_method' => 'Mpesa',
+                    'status'         => 'pending',
+                ]);
+
+                return back()->with('success', '✅ STK Push sent! Check your phone to complete payment.');
+            }
+
+            return back()->with('error', '❌ ' . ($result['errorMessage'] ?? 'STK Push failed.'));
 
         } catch (\Exception $e) {
-            Log::error('Mpesa Error: '.$e->getMessage());
-
-            return response()->json([
-                'error' => 'Mpesa request failed: '.$e->getMessage()
-            ], 500);
+            Log::error('Mpesa Error: ' . $e->getMessage());
+            return back()->with('error', 'M-Pesa request failed: ' . $e->getMessage());
         }
     }
 
-    // Callback endpoint for Safaricom
     public function callback(Request $request)
     {
         Log::info('MPESA CALLBACK', $request->all());
 
-        return response()->json([
-            "ResultCode" => 0,
-            "ResultDesc" => "Success"
-        ]);
+        $data = $request->input('Body.stkCallback');
+
+        if (isset($data['ResultCode']) && $data['ResultCode'] == 0) {
+            Log::info('Payment successful', $data);
+        }
+
+        return response()->json(["ResultCode" => 0, "ResultDesc" => "Success"]);
     }
 }
