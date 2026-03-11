@@ -10,7 +10,7 @@ class DonationController extends Controller
     // Show donation form
     public function index()
     {
-        $donations = Donation::latest()->get(); // for optional dashboard table
+        $donations = Donation::latest()->get(); // Optional: for dashboard
         return view('donate', compact('donations'));
     }
 
@@ -36,10 +36,11 @@ class DonationController extends Controller
             ->with('success', 'Donation recorded! Follow the instructions to complete your payment.');
     }
 
-    // Optional: mark as paid (admin)
+    // Optional: mark donation as paid (admin only)
     public function markPaid(Donation $donation)
     {
         $donation->update(['status' => 'Completed']);
+
         return redirect()->back()->with('success', 'Payment marked as Completed.');
     }
 }
